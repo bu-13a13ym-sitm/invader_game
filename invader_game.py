@@ -1,10 +1,7 @@
-import subprocess
-
-subprocess.run(["pip", "install", "gpiozero"])
-
 import argparse
 import asyncio
-from gpiozero import MCP3008, Button, LED
+from gpiozero import Button, LED
+from spidev import SpiDev
 from time import sleep
 from random import randint as rd
 from sys import stdout
@@ -17,14 +14,13 @@ from entity import Entity
 
 #GPIO settings
 segments = {
-    'A': LED(17),
-    'B': LED(18),
-    'C': LED(27),
-    'D': LED(22),
-    'E': LED(23),
-    'F': LED(24),
-    'G': LED(25),
-    'DP': LED(4)
+    'A': LED(18),
+    'B': LED(23),
+    'C': LED(24),
+    'D': LED(25),
+    'E': LED(12),
+    'F': LED(16),
+    'G': LED(20)
 }
 
 char_to_segments = {
@@ -52,16 +48,22 @@ char_to_segments = {
     'N': []
 }
 
-def display(char, decimal_point=False):
+def display(char):
     for segment in segments.values():
         segment.off()
     for segment in char_to_segments[char]:
         segments[segment].on()
-    if decimal_point:
-        segments['DP'].on()
 
-def convert_adc_to_pos(adc):
-    return (adc.value * 1023) // field_width
+def read_adc(channel):
+    if channel < 0 or channel > 7:
+        return -1
+    command = [1, (8 + channel) << 4, 0]
+    response = spi.xfer2(command)
+    adc_out = ((response[1] & 3) << 8) + response[2]
+    return adc_out
+
+def scale_value(value):
+    return value * field_width // 4095
 
 def pressed(frame, bul_map):
     player.fire(frame, input=0, bul_map=bul_map)
@@ -86,7 +88,10 @@ def detect_reload(player, clear, reload_indicater):
     sleep(0.2)
     reloading = False
 
-adc = MCP3008(channel=0)
+spi = SpiDev()
+spi.open(0, 0)
+spi.max_speed_hz = 1350000
+channel = 0
 button = Button(17)
 button.when_pressed = lambda: pressed(frame, bul_map)
 
@@ -127,16 +132,17 @@ try:
     frame += 1
     reload_thread = Thread(target=detect_reload, args=(player, clear, reload_indicater))
     reload_thread.start()
+    pre_php = 10000
 
     #main game start
     while not clear:
-        pre_php = player.hp
         sleep(refresh_rate)
         bul_map.advance_frame(boss=boss, player=player, frame=frame)
-        player.change_pos(convert_adc_to_pos(adc), frame)
+        adc = read_adc(channel)
+        player.change_pos(scale_value(adc), frame)
+        boss.change_pos(rd(2,22), frame)
         if frame > bstart * fps:
-            boss.change_pos(rd(2,22), frame)
-        boss.fire(frame, input=rd(0,15), bul_map=bul_map)
+            boss.fire(frame, input=rd(0,15), bul_map=bul_map)
         player.fire(frame, input=1, bul_map=bul_map)
         field = Field(player=player, boss=boss, bul_map=bul_map)
         print_field(field)
@@ -144,6 +150,7 @@ try:
         if (not reloading) and (pre_php != player.hp):
             display(player.hp)
         frame += 1
+        pre_php = player.hp
         if boss.hp == 0:
             clear = 1
             break
@@ -249,7 +256,7 @@ try:
         asyncio.run(main(field))
 
 except KeyboardInterrupt:
-    print("the game was interrupted.")
+    print("The game was interrupted.")
     pass
 
 finally:
