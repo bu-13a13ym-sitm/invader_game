@@ -1,4 +1,4 @@
-from global_variables import field_width, field_height, refresh_rate, fps, boss_graphic, player_graphic
+from global_variables import field_width, field_height, fps, enemy_graphic, player_graphic
 
 
 class BulMap:
@@ -7,7 +7,7 @@ class BulMap:
     #before execute add_new_bul method, execute advance_fram method
     def add_new_bul(self, entity, frame):
         if entity.bul_vel > 0:
-            col = len(boss_graphic)
+            col = len(enemy_graphic)
             owner = "b"
         elif entity.bul_vel < 0:
             col = field_height - len(player_graphic) - 1
@@ -16,12 +16,12 @@ class BulMap:
         self.map[col][entity.pos]["shot"] = frame
         self.map[col][entity.pos]["dam"] = entity.bul_dam
         self.map[col][entity.pos]["vel"] = entity.bul_vel
-    def advance_frame(self, boss, player, frame):
+    def advance_frame(self, enemy, player, frame):
         new_map = BulMap().map
         for col in range(len(self.map)):
             for row, info in enumerate(self.map[col]):
                 if (info["owner"] == "b") and (col < (field_height - 1)):
-                    if (frame - self.map[col][row]["shot"]) % (fps // boss.bul_vel) == 0:
+                    if (frame - self.map[col][row]["shot"]) % (fps // enemy.bul_vel) == 0:
                         if (self.map[col + 1][row]["owner"] != "p") and (new_map[col + 1][row]["owner"] != "p"):
                             new_map[col + 1][row] = info
                         else:

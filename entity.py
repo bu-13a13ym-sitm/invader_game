@@ -3,14 +3,11 @@ from bullet import BulMap
 from random import randint as rd
 
 class Entity:
-    #default set as player
-    def __init__(self,*, hp=10, width=len(player_graphic), pos=rd(2, 22), vel = 16, bul_dam=1, bul_vel=-32, burst=True, rapid_fire=3, reload=1.5):
+    def __init__(self,*, hp=0, width=0, pos=rd(2, 22), vel = 0, bul_dam=0, bul_vel=1, burst=False, rapid_fire=0, reload=0):
         self.max_hp = hp
         self.hp = hp
         self.width = width
         self.pos = pos
-        self.left = pos - width // 2
-        self.right = pos + width // 2
         self.vel = vel
         self.bul_dam = bul_dam
         self.bul_vel = bul_vel
@@ -23,20 +20,18 @@ class Entity:
         self.reload = reload * fps
         self.reloading = False
         self.reload_start = -1
-    def get_dam(self, dam = 1):
+    def get_dam(self, own="", dam = 1):
         self.hp -= dam
     def change_bul_dam(self, new_dam):
         self.bul_dam = new_dam
     def change_pos(self, new_pos, frame):
         pos = self.pos
         half_width = self.width//2
-        if (pos != new_pos) and ((new_pos >= half_width) or (new_pos < field_width - half_width)) and ((frame % (fps // self.vel)) == 0):
+        if (pos != new_pos) and ((new_pos >= half_width) and (new_pos < field_width - half_width)) and ((frame % (fps // self.vel)) == 0):
             if new_pos > self.pos:
                 self.pos += 1
             elif new_pos < self.pos:
                 self.pos -= 1
-            self.left = new_pos - half_width
-            self.right = new_pos + half_width
     def begin_rapid_fire(self, frame=-1, bul_map=BulMap()):
         bul_map.add_new_bul(self, frame)
         self.firing = True

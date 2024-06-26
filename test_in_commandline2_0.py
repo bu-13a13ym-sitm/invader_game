@@ -4,10 +4,10 @@ from random import randint as rd
 from sys import stdout
 from pynput import keyboard
 from threading import Thread
-from global_variables import refresh_rate, fps, player_graphic, enemy_graphic, easy, nomal, hard
-from field import Field
-from bullet import BulMap
-from entity import Entity
+from global_variables import field_height, field_width, refresh_rate, fps, max_items, player_graphic, enemy_graphic, item_graphic, easy, nomal, hard, effects
+from field2_0 import Field
+from maps import ItemMap, BulMap
+from entities import Creature, Item
 
 
 #choose game level from command line
@@ -35,7 +35,7 @@ ehp, evel, ebul_vel, erapid_fire, ereload, estart, php, pvel, pbul_vel, prapid_f
 
 #initialize game
 frame = 0
-player = Entity(hp=php,
+player = Creature(hp=php,
                 width=len(player_graphic),
                 pos=rd(1,23),
                 vel=pvel,
@@ -44,7 +44,7 @@ player = Entity(hp=php,
                 burst=True,
                 rapid_fire=prapid_fire,
                 reload=preload)
-enemy = Entity(hp=ehp,
+enemy = Creature(hp=ehp,
                width=len(enemy_graphic),
                pos=rd(2, 22),
                vel=evel,
@@ -54,7 +54,9 @@ enemy = Entity(hp=ehp,
                rapid_fire=erapid_fire,
                reload=ereload)
 bul_map = BulMap()
-field = Field(player=player, enemy=enemy, bul_map=bul_map)
+item_map = ItemMap()
+field = Field(player=player, enemy=enemy, item_map=item_map, bul_map=bul_map)
+item_list = []
 for col in field.field:
     print(col)
     sleep(0.2)
@@ -65,26 +67,23 @@ frame += 1
 def on_press(key):
     try:
         if hasattr(key, "char") and key.char == "a":
-            player.change_pos(new_pos=(player.pos - 1), frame=frame)
+            player.change_pos(new_pos=(player.pos["x"] - 1), frame=frame)
         elif hasattr(key, "char") and key.char == "d":
-            player.change_pos(new_pos=(player.pos + 1), frame=frame)
+            player.change_pos(new_pos=(player.pos["x"] + 1), frame=frame)
         elif key == keyboard.Key.enter:
             player.fire(frame, input=0, bul_map=bul_map)
         elif key == keyboard.Key.esc:
             return False
     except AttributeError:
         pass
-def start_listener():
-    global listener
-    listener = keyboard.Listener(on_press=on_press)
+def start_listener(listener):
     listener.start()
     listener.join()
-def stop_listner():
-    global listener
+def stop_listener(listener):
     listener.stop()
-    listener.join()
 
-listener_thread = Thread(target=start_listener)
+listener = keyboard.Listener(on_press=on_press)
+listener_thread = Thread(target=start_listener, args=(listener,))
 listener_thread.start()
 
 
@@ -93,12 +92,21 @@ try:
     #main game start
     while not clear:
         sleep(refresh_rate)
-        bul_map.advance_frame(enemy=enemy, player=player, frame=frame)
+        if (len(item_list) < max_items) and not rd(0, 1 * fps):
+            item_list.append(Item(width=len(item_graphic),
+                                  pos=(rd(2, field_width - 3), rd(3, field_height - 3)),
+                                  effect=list(effects.keys())[rd(0, len(effects) - 1)],
+                                  player=player,
+                                  enemy=enemy,
+                                  item_map=item_map,
+                                  bul_map=bul_map,
+                                  item_list=item_list))
+        bul_map.advance_frame(frame)
         enemy.change_pos(rd(2,22), frame)
         if frame > estart * fps:
             enemy.fire(frame, input=rd(0,15), bul_map=bul_map)
         player.fire(frame, input=1, bul_map=bul_map)
-        field = Field(player=player, enemy=enemy, bul_map=bul_map)
+        field = Field(player=player, enemy=enemy, item_map=item_map, bul_map=bul_map)
         field.print_field()
         stdout.flush()
         frame += 1
@@ -110,6 +118,9 @@ try:
             break
 
     #game ending process
+    for item in item_list:
+        item.sustain = 0
+        item.hp = 0
     if clear > 0:
         for col, s_col in enumerate(field.field):
             for row, s_row in enumerate(s_col):
@@ -158,5 +169,5 @@ try:
 except KeyboardInterrupt:
     pass
 finally:
-    stop_listner()
+    stop_listener(listener)
     listener_thread.join()

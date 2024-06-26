@@ -1,64 +1,75 @@
 import argparse
 import asyncio
-from gpiozero import Button, LED
+from concurrent import futures
+from functools import partial
+from RPi import GPIO
+from gpiozero import Button
 from spidev import SpiDev
 from time import sleep
 from random import randint as rd
 from sys import stdout
 from threading import Thread
-from global_variables import field_width, refresh_rate, fps, player_graphic, enemy_graphic, easy, nomal, hard
-from field import Field, print_field
-from bullet import BulMap
-from entity import Entity
+from global_variables import field_height, field_width, refresh_rate, fps, max_items, player_graphic, enemy_graphic, item_graphic, easy, nomal, hard, effects
+from field2_0 import Field
+from maps import ItemMap, BulMap
+from entities import Creature, Item
 
 
 #GPIO settings
-segments = {
-    'A': LED(18),
-    'B': LED(23),
-    'C': LED(24),
-    'D': LED(25),
-    'E': LED(12),
-    'F': LED(16),
-    'G': LED(20)
-}
-
 char_to_segments = {
-    '0': ['A', 'B', 'C', 'D', 'E', 'F'],
-    '1': ['B', 'C'],
-    '2': ['A', 'B', 'D', 'E', 'G'],
-    '3': ['A', 'B', 'C', 'D', 'G'],
-    '4': ['B', 'C', 'F', 'G'],
-    '5': ['A', 'C', 'D', 'F', 'G'],
-    '6': ['A', 'C', 'D', 'E', 'F', 'G'],
-    '7': ['A', 'B', 'C'],
-    '8': ['A', 'B', 'C', 'D', 'E', 'F', 'G'],
-    '9': ['A', 'B', 'C', 'D', 'F', 'G'],
-    '10': ['G'],
-    'A': ['A', 'D'],
-    'B': ['B', 'E'],
-    'C': ['C', 'F'],
-    'X': ['B', 'C', 'E', 'F', 'G'],
-    'a': ['A'],
-    'b': ['B'],
-    'c': ['C'],
-    'd': ['D'],
-    'e': ['E'],
-    'f': ['F'],
-    'N': []
+    '0': 0b00111111,
+    '1': 0b00000110,
+    '2': 0b01011011,
+    '3': 0b01001111,
+    '4': 0b01100110,
+    '5': 0b01101101,
+    '6': 0b01111100,
+    '7': 0b00000111,
+    '8': 0b01111111,
+    '9': 0b01101111,
+    '10': 0b01000000,
+    'A': 0b00001001,
+    'B': 0b00010010,
+    'C': 0b00100100,
+    'X': 0b01110110,
+    'a': 0b00000001,
+    'b': 0b00000010,
+    'c': 0b00000100,
+    'd': 0b00001000,
+    'e': 0b00010000,
+    'f': 0b00100000,
+    'N': 0b00000000
 }
 
-def display(char):
-    for segment in segments.values():
-        segment.off()
-    for segment in char_to_segments[char]:
-        segments[segment].on()
+MOSI = 6
+SCLK = 5
+CS = 13
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(MOSI, GPIO.OUT)
+GPIO.setup(SCLK, GPIO.OUT)
+GPIO.setup(CS, GPIO.OUT)
+
+def sspi(char):
+    GPIO.output(CS, GPIO.LOW)
+    for bit in range(8):
+        GPIO.output(MOSI, char & 0x80)
+        char <<= 1
+        GPIO.output(SCLK, GPIO.HIGH)
+        sleep(0.001)
+        GPIO.output(SCLK, GPIO.LOW)
+        sleep(0.001)
+    GPIO.output(CS, GPIO.HIGH)
+
+hspi = SpiDev()
+hspi.open(0, 0)
+hspi.max_speed_hz = 1350000
+channel = 0
 
 def read_adc(channel):
     if channel < 0 or channel > 7:
         return -1
     command = [1, (8 + channel) << 4, 0]
-    response = spi.xfer2(command)
+    response = hspi.xfer2(command)
     adc_out = ((response[1] & 3) << 8) + response[2]
     return adc_out
 
@@ -68,14 +79,17 @@ def scale_value(value):
 def pressed(frame, bul_map):
     player.fire(frame, input=0, bul_map=bul_map)
 
+button = Button(17)
+button.when_pressed = lambda: pressed(frame, bul_map)
+
 def reload_indicater(player):
     circle = ['a', 'b', 'c', 'd', 'e', 'f']
     recode = []
     for segment in char_to_segments[circle]:
         recode.append(segment)
-        for char in recode:
-            display(char)
-            sleep((player.reload // fps) / len(circle))
+        sspi(recode)
+        sleep((player.reload // fps) / len(circle))
+    sspi('N')
 
 def detect_reload(player, clear, reload_indicater):
     global reloading
@@ -88,17 +102,9 @@ def detect_reload(player, clear, reload_indicater):
     sleep(0.2)
     reloading = False
 
-spi = SpiDev()
-spi.open(0, 0)
-spi.max_speed_hz = 1350000
-channel = 0
-button = Button(17)
-button.when_pressed = lambda: pressed(frame, bul_map)
-
-
 #choose game level from command line
 parser = argparse.ArgumentParser(description="")
-parser.add_argument("--level", type=str, default= "nomal", help="choose game level from easy, nomal, and hard")
+parser.add_argument("--level", type=str, help="choose game level from easy, nomal, and hard")
 args = parser.parse_args()
 level = args.level.lower()
 while True:
@@ -118,34 +124,36 @@ ehp, evel, ebul_vel, erapid_fire, ereload, estart, php, pvel, pbul_vel, prapid_f
 
 
 #initialize new game
-player = Entity(hp=php,
-                width=len(player_graphic),
-                pos=rd(1,23),
-                vel=pvel,
-                bul_dam=1,
-                bul_vel=pbul_vel,
-                burst=True,
-                rapid_fire=prapid_fire,
-                reload=preload)
-enemy = Entity(hp=ehp,
-               width=len(enemy_graphic),
-               pos=rd(2, 22),
-               vel=evel,
-               bul_dam=1,
-               bul_vel=ebul_vel,
-               burst=False,
-               rapid_fire=erapid_fire,
-               reload=ereload)
+player = Creature(hp=php,
+                  width=len(player_graphic[0]),
+                  pos=rd((len(player_graphic[0]) // 2), field_width - (len(player_graphic[0]) // 2) - 1),
+                  vel=pvel,
+                  bul_dam=1,
+                  bul_vel=pbul_vel,
+                  burst=True,
+                  rapid_fire=prapid_fire,
+                  reload=preload)
+enemy = Creature(hp=ehp,
+                 width=len(enemy_graphic[0]),
+                 pos=rd((len(enemy_graphic[0]) // 2), field_width - (len(enemy_graphic[0]) // 2) - 1),
+                 vel=evel,
+                 bul_dam=1,
+                 bul_vel=ebul_vel,
+                 burst=False,
+                 rapid_fire=erapid_fire,
+                 reload=ereload)
+frame = 0
 clear = 0
 reloading = False
+bul_map = BulMap()
+item_map = ItemMap()
+field = Field(player=player, enemy=enemy, item_map=item_map, bul_map=bul_map)
+item_list = []
+for col in field.field:
+    print(col)
+    sleep(0.2)
+frame += 1
 try:
-    frame = 0
-    bul_map = BulMap()
-    field = Field(player=player, enemy=enemy, bul_map=bul_map)
-    for col in field.field:
-        print(col)
-        sleep(0.3)
-    frame += 1
     reload_thread = Thread(target=detect_reload, args=(player, clear, reload_indicater))
     reload_thread.start()
     pre_php = 10000
@@ -153,20 +161,30 @@ try:
     #main game start
     while not clear:
         sleep(refresh_rate)
-        bul_map.advance_frame(enemy=enemy, player=player, frame=frame)
+        #item appearance probability will increase according to frame by exponentially
+        if (len(item_list) < max_items) and not rd(0, 5 * fps):
+            item_list.append(Item(width=len(item_graphic),
+                                  pos=(rd(2, field_width - 3), rd(len(enemy_graphic), field_height - len(player_graphic) - 1)),
+                                  effect=list(effects.keys())[rd(0, len(effects) - 1)],
+                                  player=player,
+                                  enemy=enemy,
+                                  item_map=item_map,
+                                  bul_map=bul_map,
+                                  item_list=item_list))
+        bul_map.advance_frame(frame)
         adc = read_adc(channel)
         player.change_pos(scale_value(adc), frame)
-        enemy.change_pos(rd(2,22), frame)
+        enemy.change_pos(rd((len(enemy_graphic[0]) // 2), field_width - (len(enemy_graphic[0]) // 2) - 1), frame)
         if frame > estart * fps:
             enemy.fire(frame, input=rd(0,15), bul_map=bul_map)
         player.fire(frame, input=1, bul_map=bul_map)
         field = Field(player=player, enemy=enemy, bul_map=bul_map)
-        print_field(field)
+        field.print_field()
         stdout.flush()
         if (not reloading) and (pre_php != player.hp):
-            display(player.hp)
+            sspi(player.hp)
+            pre_php = player.hp
         frame += 1
-        pre_php = player.hp
         if enemy.hp == 0:
             clear = 1
             break
@@ -176,13 +194,16 @@ try:
     
     #game ending process
     reload_thread.join()
+    for item in item_list:
+        item.sustain = 0
+        item.hp = 0
     if clear > 0:
         for col, s_col in enumerate(field.field):
             for row, s_row in enumerate(s_col):
                 if s_row == " ":
                     field.field[col] = s_col[:row] + "□" + s_col[row + 1:]
                     s_col = field.field[col]
-        print_field(field)
+        field.print_field()
         sleep(0.5)
 
         async def command_line(field):
@@ -195,27 +216,24 @@ try:
                     else:
                         field.field[len(field.field) - col - 1] = f_col[:row] + " " + f_col[row + 1:]
                     f_col = field.field[len(field.field) - col - 1]
-                    print_field(field)
+                    field.print_field()
                     await asyncio.sleep(1/150)
 
         async def led():
             count = 0
             circle = ('A', 'B', 'C')
             while True:
-                display(circle[count % len(circle)])
+                sspi(circle[count % len(circle)])
                 count += 1
                 await asyncio.sleep(1 / 30)
         
         async def main(field):
-            command_line_future = asyncio.create_task(command_line(field))
-            led_future = asyncio.create_task(led())
-            
-            await command_line_future
-            led_future.cancel()
-            try:
+            loop = asyncio.get_running_loop()
+            with futures.ProcessPoolExecutor() as pool:
+                command_line_future = loop.run_in_executor(pool, partial(command_line, field))
+                led_future = loop.run_in_executor(pool, led)
+                await command_line_future
                 await led_future
-            except asyncio.CancelledError:
-                pass
         
         asyncio.run(main(field))
 
@@ -228,7 +246,7 @@ try:
                 elif s_row == "■":
                     field.field[col] = s_col[:row] + "□" + s_col[row + 1:]
                     s_col = field.field[col]
-        print_field(field)
+        field.print_field()
         sleep(0.5)
 
         async def command_line(field):
@@ -246,28 +264,24 @@ try:
                         field.field[len(field.field) - count - 1] = col[:del_field] + " " + col[del_field + 1:]
                     del_list[del_field] = False
                     col = field.field[len(field.field) - count - 1]
-                    print_field(field)
+                    field.print_field()
                     await asyncio.sleep(1/150)
 
         async def led():
             count = 0
             X = ('X', 'N')
             while True:
-                display(X[count % len(X)])
+                sspi(X[count % len(X)])
                 count += 1
                 await asyncio.sleep(0.5)
 
         async def main(field):
-            command_line_future = asyncio.create_task(command_line(field))
-            led_future = asyncio.create_task(led())
-
-            await command_line_future
-            led_future.cancel()
-
-            try:
+            loop = asyncio.get_running_loop()
+            with futures.ProcessPoolExecutor() as pool:
+                command_line_future = loop.run_in_executor(pool, partial(command_line, field))
+                led_future = loop.run_in_executor(pool, led)
+                await command_line_future
                 await led_future
-            except asyncio.CancelledError:
-                pass
         
         asyncio.run(main(field))
 
@@ -276,5 +290,4 @@ except KeyboardInterrupt:
     pass
 
 finally:
-    for segment in segments.values():
-        segment.off()
+    GPIO.cleanup()
